@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 
 	"fortio.org/log"
 	"fortio.org/term"
@@ -17,6 +18,7 @@ type Terminal struct {
 	term        *term.Terminal
 	Out         io.Writer
 	historyFile string
+	capacity    int
 }
 
 // Open opens stdin as a terminal, do `defer terminal.Close()`
@@ -41,6 +43,8 @@ func Open() (*Terminal, error) {
 		return nil, err
 	}
 	t.term.SetBracketedPasteMode(true) // Seems useful to have it on by default.
+	// 100 here matches the default value in term. should expose it there.
+	t.capacity = 100 - 1 // -1 to fit "pending" command.
 	return t, nil
 }
 
@@ -62,6 +66,10 @@ func (t *Terminal) SetHistoryFile(f string) error {
 		log.Infof("No history file specified")
 		return nil
 	}
+	if t.capacity <= 0 {
+		log.Infof("No history capacity set, ignoring history file %s", f)
+		return nil
+	}
 	if !t.IsTerminal() {
 		log.Infof("Not a terminal, not setting history file")
 		return nil
@@ -72,10 +80,16 @@ func (t *Terminal) SetHistoryFile(f string) error {
 		t.historyFile = "" // so we don't try to save during defer'ed close if we can't read
 		return err
 	}
-	for _, e := range entries {
+	start := 0
+	if len(entries) > t.capacity {
+		log.Infof("History file %s has more than %d entries, truncating.", f, t.capacity)
+		start = len(entries) - t.capacity
+	} else {
+		log.Infof("Loaded %d history entries from %s", len(entries), f)
+	}
+	for _, e := range entries[start:] {
 		t.term.AddToHistory(e)
 	}
-	log.Infof("Loaded %d history entries from %s", len(entries), f)
 	return nil
 }
 
@@ -92,8 +106,19 @@ func (t *Terminal) History() []string {
 }
 
 // NewHistory creates/resets the history to a new one with the given capacity.
+// need + 1 to fit "pending" command.
 func (t *Terminal) NewHistory(capacity int) {
-	t.term.NewHistory(capacity)
+	if capacity < 0 {
+		log.Errf("Invalid history capacity %d, ignoring", capacity)
+		return
+	}
+	t.capacity = capacity
+	t.term.NewHistory(capacity + 1)
+}
+
+// AutoHistory enables/disables auto history (default is enabled).
+func (t *Terminal) AutoHistory(enabled bool) {
+	t.term.AutoHistory(enabled)
 }
 
 func readOrCreateHistory(f string) ([]string, error) {
@@ -118,12 +143,8 @@ func readOrCreateHistory(f string) ([]string, error) {
 }
 
 func saveHistory(f string, h []string) {
-	if f == "" {
-		log.Infof("No history file specified")
-		return
-	}
 	// open file or create it
-	hf, err := os.OpenFile(f, os.O_RDWR|os.O_CREATE, 0o600)
+	hf, err := os.OpenFile(f, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o600)
 	if err != nil {
 		log.Errf("Error opening history file %s: %v", f, err)
 		return
@@ -143,15 +164,26 @@ func (t *Terminal) Close() error {
 	if t.oldState == nil {
 		return nil
 	}
+	// To avoid prompt being repeated on the last line (shouldn't be necessary but... is
+	// consider fixing in term instead)
+	t.term.SetPrompt("") // will still reprint the last command on ^C in middle of typing.
 	err := term.Restore(t.fd, t.oldState)
 	t.oldState = nil
 	t.Out = os.Stderr
 	// saving history if any
-	if t.historyFile != "" {
-		h := t.term.History()
-		log.Infof("Saving history (%d commands) to %s", len(h), t.historyFile)
-		saveHistory(t.historyFile, h)
+	if t.historyFile == "" || t.capacity <= 0 {
+		log.Debugf("No history file %q or capacity %d, not saving history", t.historyFile, t.capacity)
+		return nil
 	}
+	h := t.term.History()
+	log.LogVf("got history %v", h)
+	slices.Reverse(h)
+	extra := len(h) - t.capacity
+	if extra > 0 {
+		h = h[extra:] // truncate to max capacity otherwise extra ones will get out of order
+	}
+	log.Infof("Saving history (%d commands) to %s", len(h), t.historyFile)
+	saveHistory(t.historyFile, h)
 	return err
 }
 

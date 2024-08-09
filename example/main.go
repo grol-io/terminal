@@ -57,14 +57,21 @@ func autoCompleteCallback(t *terminal.Terminal, line string, pos int, key rune) 
 func Main() int {
 	// Pending https://github.com/golang/go/issues/68780
 	flagHistory := flag.String("history", "/tmp/terminal_history", "History `file` to use")
+	flagMaxHistory := flag.Int("max-history", 10, "Max number of history lines to keep")
+	flagOnlyValid := flag.Bool("only-valid", false, "Demonstrates filtering of history, only adding valid commands to it")
 	cli.Main()
 	t, err := terminal.Open()
 	if err != nil {
 		return log.FErrf("Error opening terminal: %v", err)
 	}
 	defer t.Close()
+	onlyValid := *flagOnlyValid
+	if onlyValid {
+		t.AutoHistory(false)
+	}
 	t.SetPrompt("Terminal demo> ")
 	t.LoggerSetup()
+	t.NewHistory(*flagMaxHistory)
 	if err := t.SetHistoryFile(*flagHistory); err != nil {
 		// error already logged
 		return 1
@@ -92,6 +99,9 @@ func Main() int {
 		case l == helpCmd:
 			fmt.Fprintf(t.Out, "Available commands: %v\n", commands)
 		case strings.HasPrefix(l, afterCmd):
+			if onlyValid {
+				t.AddToHistory(l) // even if there is duration parse error, so it can be edited/fixed using up arrow
+			}
 			parts := strings.SplitN(l, " ", 3)
 			if len(parts) < 3 {
 				fmt.Fprintf(t.Out, "Usage: %s <duration> <text...>\n", afterCmd)
@@ -108,6 +118,9 @@ func Main() int {
 				fmt.Fprintf(t.Out, "%s\n", parts[2])
 			}()
 		case strings.HasPrefix(l, promptCmd):
+			if onlyValid {
+				t.AddToHistory(l)
+			}
 			t.SetPrompt(l[len(promptCmd):])
 		default:
 			fmt.Fprintf(t.Out, "Unknown command %q\n", l)
