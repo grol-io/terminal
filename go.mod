@@ -1,6 +1,6 @@
 module fortio.org/terminal
 
-go 1.25.0
+go 1.26.0
 
 require (
 	fortio.org/cli v1.12.3
@@ -9,9 +9,9 @@ require (
 	fortio.org/safecast v1.2.0
 	github.com/jbuchbinder/gopnm v0.0.0-20220507095634-e31f54490ce0
 	github.com/rivo/uniseg v0.4.7
-	golang.org/x/image v0.45.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
+	golang.org/x/image v0.46.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
 )
 
 require (
